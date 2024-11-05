@@ -202,6 +202,8 @@ impl EventHandler for FolderDiffApp {
 
 fn main() -> GameResult {
     let (mut ctx, event_loop) = ContextBuilder::new("Folder Diff", "klmv.dev")
+        .window_setup(ggez::conf::WindowSetup::default().title("Folder Difference Application"))
+        .window_mode(ggez::conf::WindowMode::default().dimensions(800.0, 600.0).resizable(true))
         .build()
         .expect("Failed to build ggez context");
 
