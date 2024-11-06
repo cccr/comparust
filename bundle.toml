@@ -1,0 +1,9 @@
+[bundle]
+name = "Comparust"
+identifier = "dev.klmn.comparust"
+version = "0.1.0"
+short_version = "0.1.0"
+
+[bundle.mac]
+framework_version = "A"
+minimum_system_version = "10.12"

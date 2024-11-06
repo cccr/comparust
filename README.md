@@ -1,57 +1,45 @@
 # Comparust
 
-Rust application that compares two folders:
-
+A simple Rust application with a GTK-based graphical interface, designed for macOS.
 ![](./screenshot.png)
 
-## Application Requirements
+## Features
 
-### 1. User Interface:
+- Compares folder contents, showing differences.
+- Allows folder selection through UI or drag-and-drop.
+- Filter and color-coded display options.
 
-- A graphical user interface (GUI) using the ggez library.
-- Support for drag-and-drop functionality to specify folder paths.
-- Keyboard shortcuts for specific actions:
-- S: Swap the two folders.
-- 1: Show only the results from Folder 1.
-- 2: Show only the results from Folder 2.
-- Display instructions for the user at the top of the window.
+## Requirements
 
-### 2. Folder Comparison Logic:
+- Rust
+- GTK 4 (Installable via Homebrew)
 
-- Ability to read the contents of two specified folders.
-- Display differences between the two folders:
-- List files that are only present in Folder 1.
-- List files that are only present in Folder 2.
-- Ignore .DS_Store files in comparisons (optional).
-- Option for recursive comparison of folder contents (optional).
+## Installation
 
-### 3. Output Display:
+Install GTK 4 via Homebrew:
 
-- Display results in a scrollable area below the instruction text.
-- Each result should be displayed on a separate line.
-- Results should be color-coded:
-- Results from Folder 1 are displayed in blue.
-- Results from Folder 2 are displayed in green.
-- General output is displayed in white.
-- Clear visual separation (border) between instruction text and results.
+``` brew install gtk4```
 
-### 4. User Interaction:
+Add PKG_CONFIG_PATH for GTK libraries:
 
-- Allow users to dynamically filter displayed results without restarting the application.
-- Results should remain visible after exporting to prevent loss of context.
-- Implement a way to export or save the comparison results (optional).
+    export PKG_CONFIG_PATH="/opt/homebrew/lib/pkgconfig:/opt/homebrew/share/pkgconfig"
 
-### 5. Error Handling:
+Clone Repository
 
-- Graceful handling of errors when reading folders (e.g., access denied, non-existent folders).
-- User feedback in the GUI for any errors encountered during folder operations.
+git clone https://github.com/cccr/comparust.git
+cd comparust
 
-### 6. Performance:
+## Build and Bundle the App
 
-- Efficient comparison of folder contents, especially for large directories.
+Use cargo bundle to create a macOS .app package:
 
-## Technical Requirements
+    cargo install cargo-bundle
+    cargo bundle
 
-- Use the ggez library for creating the GUI.
-- Use standard Rust features and libraries for file handling and comparisons.
-- Ensure compatibility with macOS.
+The app bundle will be located in target/release/bundle/osz/comparust.app.
+
+## Running the App
+
+To launch, double-click **comparust.app** in Finder. You can also run the binary directly:
+
+    ./target/release/bundle/osz/comparust.app/Contents/MacOS/comparust

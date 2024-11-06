@@ -1,213 +1,187 @@
-use ggez::graphics::FillOptions;
-use ggez::event::{EventHandler, KeyCode, KeyMods};
-use ggez::{Context, ContextBuilder, GameResult};
-use ggez::graphics::{self, Color, Text, TextFragment, Rect};
-use rfd::FileDialog;
-use std::fs::File;
-use std::io::Write;
-use std::process::Command;
-use std::path::PathBuf;
-use std::sync::mpsc;
-use std::thread;
+use glib::clone;
+use gtk4::prelude::*;
+use gtk4::Application;
+use gtk4::ApplicationWindow;
+use gtk4::Button;
+use gtk4::Grid;
+use gtk4::Label;
+use gtk4::ScrolledWindow;
+use gtk4::TextView;
+use gtk4::{FileChooserAction, FileChooserNative, ResponseType};
+use std::cell::RefCell;
+use std::collections::HashSet;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
-struct FolderDiffApp {
-    folder1: Option<PathBuf>,
-    folder2: Option<PathBuf>,
-    diff_output: Vec<String>, // Change to Vec<String> for individual lines
-    progress: f32,
-    folder1_sender: mpsc::Sender<Option<PathBuf>>,
-    folder2_sender: mpsc::Sender<Option<PathBuf>>,
-    folder1_receiver: mpsc::Receiver<Option<PathBuf>>,
-    folder2_receiver: mpsc::Receiver<Option<PathBuf>>,
-    recursive: bool,
-    ignore_ds_store: bool,
-    display_folder1_only: bool,
-    display_folder2_only: bool,
-}
+fn main() {
+    let app = Application::builder()
+        .application_id("dev.klmn.comparust")
+        .build();
 
-impl FolderDiffApp {
-    fn new(_ctx: &mut Context) -> FolderDiffApp {
-        let (folder1_tx, folder1_rx) = mpsc::channel();
-        let (folder2_tx, folder2_rx) = mpsc::channel();
+    app.connect_activate(|app| {
+        let window = ApplicationWindow::builder()
+            .application(app)
+            .title("Folder Comparison Tool")
+            .default_width(600)
+            .default_height(400)
+            .build();
 
-        FolderDiffApp {
-            folder1: None,
-            folder2: None,
-            diff_output: vec!["Select two folders to compare.\nPress Enter to run diff.".to_string()],
-            progress: 0.0,
-            folder1_sender: folder1_tx,
-            folder2_sender: folder2_tx,
-            folder1_receiver: folder1_rx,
-            folder2_receiver: folder2_rx,
-            recursive: true,
-            ignore_ds_store: true,
-            display_folder1_only: false,
-            display_folder2_only: false,
-        }
-    }
+        let folder1_label = Label::new(Some("Folder 1: Not Selected"));
+        let folder2_label = Label::new(Some("Folder 2: Not Selected"));
 
-    fn run_diff(&mut self) {
-        if let (Some(ref folder1), Some(ref folder2)) = (&self.folder1, &self.folder2) {
-            let mut args = vec!["-rq"];
-            if self.recursive {
-                args.push("-r");
-            }
-            args.extend_from_slice(&[folder1.to_str().unwrap(), folder2.to_str().unwrap()]);
+        let choose_folder1_button = Button::with_label("Choose Folder 1");
+        let choose_folder2_button = Button::with_label("Choose Folder 2");
+        let compare_button = Button::with_label("Compare Folders");
+        let export_button = Button::with_label("Export Results");
 
-            self.progress = 0.0;
-            let output = Command::new("diff")
-                .args(&args)
-                .output();
+        let results_view = TextView::new();
+        results_view.set_editable(false);
 
-            match output {
-                Ok(output) => {
-                    let output_text = String::from_utf8_lossy(&output.stdout).to_string();
-                    let filtered_output: Vec<String> = if self.ignore_ds_store {
-                        output_text
-                            .lines()
-                            .filter(|line| !line.contains(".DS_Store"))
-                            .map(String::from)
-                            .collect()
-                    } else {
-                        output_text.lines().map(String::from).collect()
-                    };
+        let scrolled_window = ScrolledWindow::builder()
+            .child(&results_view)
+            .vexpand(true)
+            .build();
 
-                    self.diff_output = filtered_output;
-                }
-                Err(err) => {
-                    self.diff_output = vec![format!("Error running diff command: {}", err)];
-                }
-            }
-        } else {
-            self.diff_output = vec!["Both folder paths are required.".to_string()];
-        }
-    }
+        let grid = Grid::builder()
+            .margin_start(10)
+            .margin_end(10)
+            .margin_top(10)
+            .margin_bottom(10)
+            .row_spacing(5)
+            .column_spacing(5)
+            .build();
 
-    fn open_folder_dialog(&self, is_first_folder: bool) {
-        let sender = if is_first_folder {
-            self.folder1_sender.clone()
-        } else {
-            self.folder2_sender.clone()
-        };
+        grid.attach(&folder1_label, 0, 0, 3, 1);
+        grid.attach(&folder2_label, 0, 1, 3, 1);
+        grid.attach(&choose_folder1_button, 3, 0, 1, 1);
+        grid.attach(&choose_folder2_button, 3, 1, 1, 1);
+        grid.attach(&compare_button, 0, 2, 4, 1);
+        grid.attach(&scrolled_window, 0, 3, 4, 1);
+        grid.attach(&export_button, 0, 4, 4, 1);
 
-        thread::spawn(move || {
-            let folder_path = FileDialog::new().pick_folder();
-            sender.send(folder_path).expect("Failed to send folder path");
-        });
-    }
+        let results_buffer = results_view.buffer();
 
-    fn export_results(&self) {
-        if !self.diff_output.is_empty() {
-            let mut file = File::create("diff_results.txt").expect("Unable to create file");
-            file.write_all(self.diff_output.join("\n").as_bytes())
-                .expect("Unable to write data");
-        }
-    }
+        let folder1 = Rc::new(RefCell::new(None));
+        let folder2 = Rc::new(RefCell::new(None));
 
-    fn clear_selections(&mut self) {
-        self.folder1 = None;
-        self.folder2 = None;
-        self.diff_output.clear();
-    }
-
-    fn filter_and_color_diff_output(&self) -> Vec<TextFragment> {
-        self.diff_output.iter()
-            .filter_map(|line| {
-                if self.display_folder1_only && line.contains("Only in") && line.contains(self.folder1.as_ref()?.to_str()?) {
-                    Some(TextFragment::new(line.as_str()).color(Color::BLUE))
-                } else if self.display_folder2_only && line.contains("Only in") && line.contains(self.folder2.as_ref()?.to_str()?) {
-                    Some(TextFragment::new(line.as_str()).color(Color::GREEN))
-                } else if !self.display_folder1_only && !self.display_folder2_only {
-                    if line.contains(self.folder1.as_ref()?.to_str()?) {
-                        Some(TextFragment::new(line.as_str()).color(Color::BLUE))
-                    } else if line.contains(self.folder2.as_ref()?.to_str()?) {
-                        Some(TextFragment::new(line.as_str()).color(Color::GREEN))
-                    } else {
-                        None
+        choose_folder1_button.connect_clicked(clone!(@weak folder1_label, @weak window, @strong folder1 => move |_| {
+            create_file_chooser_dialog(&window, "Select Folder 1", FileChooserAction::SelectFolder, {
+                let folder1 = folder1.clone();
+                move |folder_path| {
+                    if let Some(path) = folder_path {
+                        folder1.replace(Some(path.clone())); // Clone the path before replacing it in folder1.
+                        folder1_label.set_text(&format!("Folder 1: {:?}", path)); // Use the original path here.
                     }
-                } else {
-                    None
                 }
-            })
-            .collect()
-    }
+            });
+        }));
 
-    fn swap_folders(&mut self) {
-        std::mem::swap(&mut self.folder1, &mut self.folder2);
-    }
-}
+        choose_folder2_button.connect_clicked(clone!(@weak folder2_label, @weak window, @strong folder2 => move |_| {
+            create_file_chooser_dialog(&window, "Select Folder 2", FileChooserAction::SelectFolder, {
+                let folder2 = folder2.clone();
+                move |folder_path| {
+                    if let Some(path) = folder_path {
+                        folder2.replace(Some(path.clone())); // Update the value in Rc<RefCell<>>.
+                        folder2_label.set_text(&format!("Folder 2: {:?}", path));
+                    }
+                }
+            });
+        }));
 
-impl EventHandler for FolderDiffApp {
-    fn update(&mut self, _ctx: &mut Context) -> GameResult {
-        if let Ok(Some(folder_path)) = self.folder1_receiver.try_recv() {
-            self.folder1 = Some(folder_path);
-        }
-        if let Ok(Some(folder_path)) = self.folder2_receiver.try_recv() {
-            self.folder2 = Some(folder_path);
-        }
-        Ok(())
-    }
+        compare_button.connect_clicked(clone!(@weak results_buffer => move |_| {
+            if let (Some(ref path1), Some(ref path2)) = (folder1.borrow().as_ref(), folder2.borrow().as_ref()) {
+                let (only_in_folder1, only_in_folder2) = compare_folders(path1, path2);
 
-    fn draw(&mut self, ctx: &mut Context) -> GameResult {
-        graphics::clear(ctx, Color::BLACK);
+                let mut results_text = String::new();
+                results_text.push_str("Files only in Folder 1:\n");
+                for file in &only_in_folder1 {
+                    results_text.push_str(&format!("{}\n", file.display()));
+                }
+                results_text.push_str("\nFiles only in Folder 2:\n");
+                for file in &only_in_folder2 {
+                    results_text.push_str(&format!("{}\n", file.display()));
+                }
 
-        let folder1_display = self.folder1.as_ref().map_or("None".to_string(), |p| p.display().to_string());
-        let folder2_display = self.folder2.as_ref().map_or("None".to_string(), |p| p.display().to_string());
-
-        let instruction_text = Text::new(format!(
-            "Folder 1: {}\nFolder 2: {}\n\nOptions:\n- Recursive (R): {}\n- Ignore .DS_Store (D): {}\n- Show Only Folder 1 (1): {}\n- Show Only Folder 2 (2): {}\n\nActions:\n- Swap Folders (S)\n- Clear Selections (C)\n- Export Results (E)\n\nPress Enter to run diff.",
-            folder1_display, folder2_display, self.recursive, self.ignore_ds_store, self.display_folder1_only, self.display_folder2_only
-        ));
-        graphics::draw(ctx, &instruction_text, (ggez::mint::Point2 { x: 10.0, y: 10.0 },))?;
-
-        // Draw separator
-        let separator_rect = Rect::new(10.0, instruction_text.height(ctx) + 20.0, 300.0, 2.0);
-        let colored_mesh = graphics::Mesh::new_rectangle(ctx, graphics::DrawMode::Fill(FillOptions::default()), separator_rect, graphics::Color::WHITE)?;
-        graphics::draw(ctx, &colored_mesh, (ggez::mint::Point2 { x: 0.0, y: 0.0 },))?;
-
-        // Draw results
-        let result_y_start = instruction_text.height(ctx) + 30.0;
-        let result_height = 400.0;  // Height for the results area
-
-        let mut current_y = result_y_start;
-
-        let results = self.filter_and_color_diff_output();
-        for line in results {
-            let result_text = Text::new(line);
-            if current_y < result_y_start + result_height {
-                graphics::draw(ctx, &result_text, (ggez::mint::Point2 { x: 10.0, y: current_y },))?;
-                current_y += result_text.height(ctx);
+                results_buffer.set_text(&results_text);
+            } else {
+                results_buffer.set_text("Please select both folders before comparing.");
             }
-        }
+        }));
 
-        graphics::present(ctx)
-    }
+        export_button.connect_clicked(clone!(@weak results_buffer, @weak window => move |_| {
+            create_file_chooser_dialog(&window, "Select Export Location", FileChooserAction::Save, move |export_path| {
+                if let Some(file) = export_path {
+                    if let Ok(mut file) = std::fs::File::create(file) {
+                        // Get the text from the results buffer
+                        let export_text = results_buffer.text(&results_buffer.start_iter(), &results_buffer.end_iter(), false);
+                        // Write the text to the file
+                        if let Err(e) = std::io::Write::write_all(&mut file, export_text.as_bytes()) {
+                            eprintln!("Failed to write to file: {}", e);
+                        }
+                    } else {
+                        eprintln!("Failed to create file at the specified location.");
+                    }
+                }
+            });
+        }));
 
-    fn key_down_event(&mut self, _ctx: &mut Context, keycode: KeyCode, _keymods: KeyMods, _repeat: bool) {
-        match keycode {
-            KeyCode::Return => self.run_diff(),
-            KeyCode::F1 => self.open_folder_dialog(true),
-            KeyCode::F2 => self.open_folder_dialog(false),
-            KeyCode::R => self.recursive = !self.recursive,
-            KeyCode::D => self.ignore_ds_store = !self.ignore_ds_store,
-            KeyCode::Key1 => self.display_folder1_only = !self.display_folder1_only,
-            KeyCode::Key2 => self.display_folder2_only = !self.display_folder2_only,
-            KeyCode::S => self.swap_folders(),
-            KeyCode::C => self.clear_selections(),
-            KeyCode::E => self.export_results(),
-            _ => {}
-        }
-    }
+
+        window.set_child(Some(&grid));
+        window.show();
+    });
+
+    app.run();
 }
 
-fn main() -> GameResult {
-    let (mut ctx, event_loop) = ContextBuilder::new("Folder Diff", "klmv.dev")
-        .window_setup(ggez::conf::WindowSetup::default().title("Folder Difference Application"))
-        .window_mode(ggez::conf::WindowMode::default().dimensions(800.0, 600.0).resizable(true))
-        .build()
-        .expect("Failed to build ggez context");
+fn create_file_chooser_dialog<W: IsA<gtk4::Window>>(
+    window: &W,
+    title: &str,
+    chooser_action: FileChooserAction,
+    callback: impl Fn(Option<PathBuf>) + 'static,
+) {
+    // Create a new file chooser dialog for folder selection
 
-    let app = FolderDiffApp::new(&mut ctx);
+    let native = FileChooserNative::new(
+        Some(title),
+        Some(window),
+        chooser_action,
+        Some("Select"),
+        Some("Cancel"),
+    );
+    let dialog = native;
 
-    ggez::event::run(ctx, event_loop, app)
+    dialog.connect_response(move |dialog, response| {
+        if response == ResponseType::Accept {
+            // If a folder is selected, pass the path to the callback
+            let folder_path = dialog.file().and_then(|folder| folder.path());
+            callback(folder_path);
+        } else {
+            callback(None);
+        }
+        dialog.destroy(); // Close the dialog
+    });
+
+    dialog.show();
+}
+
+fn get_files_in_folder(path: &Path) -> Vec<PathBuf> {
+    fs::read_dir(path)
+        .map(|read_dir| {
+            read_dir
+                .filter_map(|entry| entry.ok())
+                .map(|entry| entry.path())
+                .collect()
+        })
+        .unwrap_or_else(|_| Vec::new())
+}
+
+fn compare_folders(folder1: &Path, folder2: &Path) -> (Vec<PathBuf>, Vec<PathBuf>) {
+    let files1: HashSet<PathBuf> = get_files_in_folder(folder1).into_iter().collect();
+    let files2: HashSet<PathBuf> = get_files_in_folder(folder2).into_iter().collect();
+
+    let only_in_folder1: Vec<PathBuf> = files1.difference(&files2).cloned().collect();
+    let only_in_folder2: Vec<PathBuf> = files2.difference(&files1).cloned().collect();
+
+    (only_in_folder1, only_in_folder2)
 }
