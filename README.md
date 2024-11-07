@@ -38,6 +38,10 @@ Use cargo bundle to create a macOS .app package:
 
 The app bundle will be located in target/release/bundle/osz/comparust.app.
 
+## Build for Windows
+
+Follow https://gtk-rs.org/gtk4-rs/stable/latest/book/installation_windows.html (Install GTK 4 with MSYS2 and the GNU toolchain) + replace with https://winlibs.com/#usage-commandprompt
+
 ## Running the App
 
 To launch, double-click **comparust.app** in Finder. You can also run the binary directly:
